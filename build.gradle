@@ -1,0 +1,142 @@
+import java.time.Duration
+
+// ============================
+//  Plugins
+// ============================
+
+plugins {
+    id 'java'
+    id 'org.jetbrains.kotlin.jvm' version '1.3.60'
+    id 'com.github.johnrengelman.shadow' version '5.2.0'
+}
+
+// ============================
+//  Configure
+// ============================
+
+group "${package_group_id}.${package_artifact_id}"
+version package_version
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+compileKotlin.kotlinOptions.jvmTarget = "1.8"
+compileTestKotlin.kotlinOptions.jvmTarget = "1.8"
+
+// ============================
+//  Dependencies
+// ============================
+
+repositories {
+    jcenter()
+    mavenCentral()
+    maven { url "https://hub.spigotmc.org/nexus/content/repositories/snapshots" }
+    maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+    implementation "org.spigotmc:spigot-api:${spigot_version}"
+    testCompile group: 'junit', name: 'junit', version: '4.12'
+}
+
+shadowJar {
+    dependencies {
+        exclude(dependency("org.spigotmc:spigot-api:${spigot_version}"))
+    }
+}
+
+// ============================
+//  Variables
+// ============================
+
+def devServerDir = file("dev-server/")
+def buildToolsDir = file("buildtools/")
+def devServerJar = file("dev-server/spigot.jar")
+def buildToolsJar = file("buildtools/buildtools.jar")
+
+def spigotBuildToolsUrl = new URL("https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar")
+
+// ============================
+//  Tasks - Serve
+// ============================
+
+clean {
+    delete devServerDir, buildToolsDir
+}
+
+task mkdir {
+    doFirst {
+        devServerDir.mkdirs()
+        buildToolsDir.mkdirs()
+    }
+    outputs.dir devServerDir
+    outputs.dir buildToolsDir
+}
+
+task downloadSpigotBuildTools {
+    doFirst {
+        spigotBuildToolsUrl.withInputStream {
+            i -> buildToolsJar.withOutputStream { it << i }
+        }
+    }
+    onlyIf { !buildToolsJar.exists() }
+    dependsOn 'mkdir'
+}
+
+task buildSpigot {
+    doFirst {
+        javaexec {
+            workingDir = buildToolsDir.path
+            main = "-jar"
+            args = ["buildtools.jar", "--rev", "1.15.2"]
+        }
+    }
+    onlyIf { !file("buildtools/spigot-1.15.2.jar").exists() }
+    dependsOn 'downloadSpigotBuildTools'
+}
+
+task prepareDevServer {
+    doFirst {
+        copy {
+            from "buildtools/spigot-1.15.2.jar"
+            into "dev-server"
+        }
+        copy {
+            from "config"
+            into "dev-server"
+        }
+    }
+    onlyIf { !devServerJar.exists() }
+    dependsOn 'buildSpigot'
+}
+
+task copyJar {
+    doFirst {
+        copy {
+            from "${buildDir}/libs"
+            into "dev-server/plugins"
+        }
+    }
+    dependsOn 'shadowJar'
+    mustRunAfter 'prepareDevServer'
+}
+
+task serve {
+    doFirst {
+        javaexec {
+            workingDir = devServerDir.path
+            main = '-jar'
+            args = ['spigot-1.15.2.jar']
+        }
+    }
+    timeout = Duration.ofDays(1)
+    dependsOn 'prepareDevServer'
+    dependsOn 'copyJar'
+}
+
+// ============================
+//  Tasks - Compile
+// ============================
+
+task compile(dependsOn: ['shadowJar'])

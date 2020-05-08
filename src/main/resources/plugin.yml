@@ -1,0 +1,4 @@
+name: "MinecartCollector"
+main: "navy.warspite.spigot.MinecartCollector.Main"
+version: "1.0"
+api-version: "1.15"
